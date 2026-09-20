@@ -54,4 +54,4 @@ https://forum.gamer.com.tw/Co.php?bsn=60030&sn=2550747
 
 ## License
 
-Do whatever you want with this.
+Adul Tanthuvanit
