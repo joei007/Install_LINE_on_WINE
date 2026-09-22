@@ -4,7 +4,7 @@ A single self-contained Python script that patches an existing [Bottles](https:/
 
 It fixes two separate, unrelated problems that currently affect LINE on Wine:
 
-1. **The drop-shadow "ghost window" bug** — LINE creates 8 auxiliary border/corner windows of its own (`shadow_side_*` / `shadow_corner_*`) that are meant to be filled in by the OS's native window shadow (via `DwmExtendFrameIntoClientArea`). Wine's implementation of that DWM API is an empty stub that does nothing, so on Wine these windows end up rendering as solid, always-on-top rectangles that cover other applications instead. This is **not** a Wine bug or a Qt bug — confirmed by grepping the actual Wine and Qt source trees for the class names involved, with zero matches in either — it's LINE's own closed-source fallback shadow implementation.
+1. **The drop-shadow "ghost window" bug** — LINE creates 8 auxiliary border/corner windows of its own (`shadow_side_*` / `shadow_corner_*`) that end up rendering as solid, always-on-top rectangles that cover other applications. This is **not** a Wine bug or a Qt bug — confirmed by grepping the actual Wine and Qt source trees for the class names involved, with zero matches in either — it's LINE's own closed-source shadow/resize-helper implementation, and exactly why it behaves this way under Wine isn't fully known.
 
 2. **The `NO_SIGNATURE` error** — LINE 26.1.x and newer check whether Windows system DLLs are digitally signed before running. Wine's DLLs aren't signed by Microsoft, so LINE refuses to start. LINE's check only verifies that *a* signature is present, not that it's valid, so self-signing every DLL with a fake certificate satisfies it.
 
@@ -45,6 +45,7 @@ After it finishes, download and run the LINE installer inside that bottle as usu
 - Safe to re-run: it detects an existing `dwmapi_real.dll` backup and won't overwrite it with an already-patched `dwmapi.dll`, and re-signing an already-signed DLL is harmless.
 - The DLL signing step **overwrites every `.dll` in `system32` and `syswow64`** in place. If you want to keep an unmodified copy of the bottle, back it up first.
 - If you update or recreate the bottle (new runner, fresh bottle), you'll need to run the script again — a new bottle starts with unsigned, unpatched DLLs.
+- **Changing the runner on an existing bottle also requires re-running this script.** A runner switch replaces the bottle's system DLLs with the new runner's (unsigned) copies, so `NO_SIGNATURE` will come back until you patch it again — this isn't limited to creating a brand new bottle.
 - This only fixes running LINE under Wine; it doesn't fix anything on real Windows and has no effect there.
 
 ## Credits
