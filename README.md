@@ -2,7 +2,8 @@
 
 | Before Patch | After Patch |
 | :---: | :---: |
-| <img width="1068" height="804" alt="Screenshot from 2026-09-25 10-42-12" src="https://github.com/user-attachments/assets/fed30c1d-dcfc-4147-9bcf-c84dfe517ad4" /><img width="1936" height="1506" alt="Screenshot from 2026-09-25 10-44-00" src="https://github.com/user-attachments/assets/82ed1a4c-1941-4faa-9c95-89ce6ac51db9" /> | <img width="1448" height="1056" alt="Screenshot from 2026-09-25 10-42-31" src="https://github.com/user-attachments/assets/440fc606-2d4d-4c1c-8276-407b1c6fb084" /><img width="1904" height="1464" alt="Screenshot from 2026-09-25 10-44-42" src="https://github.com/user-attachments/assets/fd5472be-a3f3-4819-84c1-296b1ae4dbe2" /> |
+| <img width="1068" height="804" alt="Screenshot from 2026-09-25 10-42-12" src="https://github.com/user-attachments/assets/fed30c1d-dcfc-4147-9bcf-c84dfe517ad4" /> | <img width="1448" height="1056" alt="Screenshot from 2026-09-25 10-42-31" src="https://github.com/user-attachments/assets/440fc606-2d4d-4c1c-8276-407b1c6fb084" /> |
+| <img width="1936" height="1506" alt="Screenshot from 2026-09-25 10-44-00" src="https://github.com/user-attachments/assets/82ed1a4c-1941-4faa-9c95-89ce6ac51db9" /> | <img width="1904" height="1464" alt="Screenshot from 2026-09-25 10-44-42" src="https://github.com/user-attachments/assets/fd5472be-a3f3-4819-84c1-296b1ae4dbe2" /> |
 
 A single self-contained Python script that patches an existing [Bottles](https://usebottles.com/) (Flatpak) bottle so [LINE](https://line.me/) for Windows runs correctly under Wine.
 
