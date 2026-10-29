@@ -89,17 +89,45 @@ def choose_bottle():
 # --------------------------------------------------------------------
 # Step 2: find the wine binary this bottle uses
 # --------------------------------------------------------------------
+#
+# The registry write below must be done by the SAME wine build the
+# bottle's runner uses. A different build (for example whatever wine
+# happens to be on $PATH) can fail with a wineserver version mismatch,
+# or even upgrade the prefix behind your back. So the lookup is:
+#   1. read the runner name from the bottle's own config,
+#   2. locate that runner's wine binary (runner archives are laid out
+#      differently from each other),
+#   3. confirm the binary really runs (`wine --version`, which never
+#      touches the prefix),
+#   4. only if all of that fails, offer the other working runners, and
+#      finally let you type a path by hand.
+
+# Where a wine executable can live inside a runner directory, in order
+# of preference. Plain wine builds (Soda, Caffe, Kron4ek, ...) keep it
+# under bin/; Proton-style builds put it under files/ (Proton-GE) or
+# dist/ (older Valve Proton).
+RUNNER_BIN_LAYOUTS = (
+    "bin/wine64", "bin/wine",
+    "files/bin/wine64", "files/bin/wine",
+    "dist/bin/wine64", "dist/bin/wine",
+)
+
 
 def find_runner_name(bottle_path: Path):
-    # Try the classic YAML config first.
+    # YAML config (bottle.yml). Tolerates quoted values, CRLF line
+    # endings, trailing comments, and a key that is not at column 0.
     yml = bottle_path / "bottle.yml"
     if yml.is_file():
         text = yml.read_text(errors="ignore")
-        m = re.search(r"^Runner:\s*(.+)$", text, re.MULTILINE)
-        if m:
-            return m.group(1).strip()
+        for pattern in (r"^Runner[ \t]*:[ \t]*(.+?)[ \t]*(?:#.*)?$",
+                        r"^[ \t]*Runner[ \t]*:[ \t]*(.+?)[ \t]*(?:#.*)?$"):
+            m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+            if m:
+                value = m.group(1).strip().strip("'\"").strip()
+                if value:
+                    return value
 
-    # Try newer JSON-style configs.
+    # Newer JSON-style configs.
     for name in ("configuration.json", "settings.json", "bottle.json"):
         f = bottle_path / name
         if f.is_file():
@@ -109,39 +137,161 @@ def find_runner_name(bottle_path: Path):
                 continue
             runner = data.get("Runner") or data.get("runner")
             if runner:
-                return runner
+                return str(runner).strip()
 
     return None
 
 
-def find_wine_binary(bottle_path: Path):
-    runner = find_runner_name(bottle_path)
-    candidates = []
-    if runner:
-        candidates.append(RUNNERS_DIR / runner / "bin" / "wine64")
-        candidates.append(RUNNERS_DIR / runner / "bin" / "wine")
-    if not candidates or not any(c.is_file() for c in candidates):
-        # Fall back: if only one runner is installed, use it.
-        if RUNNERS_DIR.is_dir():
-            available = sorted(p.name for p in RUNNERS_DIR.iterdir() if p.is_dir())
-            if len(available) == 1:
-                candidates.append(RUNNERS_DIR / available[0] / "bin" / "wine64")
-                candidates.append(RUNNERS_DIR / available[0] / "bin" / "wine")
-            elif available:
-                print("\nCould not detect this bottle's runner automatically. "
-                      "Choose the runner to use:")
-                for i, name in enumerate(available, 1):
-                    print(f"  {i}. {name}")
-                choice = input("Number: ").strip()
-                if choice.isdigit() and 1 <= int(choice) <= len(available):
-                    name = available[int(choice) - 1]
-                    candidates.append(RUNNERS_DIR / name / "bin" / "wine64")
-                    candidates.append(RUNNERS_DIR / name / "bin" / "wine")
+def runner_roots(bottle_path: Path):
+    """Existing directories that may hold runners, most specific first."""
+    roots = []
+    for root in (bottle_path.parent.parent / "runners", RUNNERS_DIR):
+        if root.is_dir() and root not in roots:
+            roots.append(root)
+    return roots
 
-    for c in candidates:
-        if c.is_file():
-            return c
-    fail("Could not find a wine binary for this bottle")
+
+def probe_wine(wine_bin: Path):
+    """Return wine's version string if this binary runs, else None."""
+    env = os.environ.copy()
+    env["WINEDEBUG"] = "-all"
+    try:
+        result = subprocess.run([str(wine_bin), "--version"], env=env,
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    version = result.stdout.strip()
+    if result.returncode == 0 and version:
+        return version
+    return None
+
+
+def candidate_binaries(runner_dir: Path):
+    """Executable wine binaries inside a runner directory, best first."""
+    found = []
+
+    def add(path: Path):
+        if path not in found and path.is_file() and os.access(path, os.X_OK):
+            found.append(path)
+
+    for rel in RUNNER_BIN_LAYOUTS:
+        add(runner_dir / rel)
+
+    # Unknown layout, e.g. an archive extracted with an extra top-level
+    # folder: search a couple of levels down.
+    for pattern in ("*/bin/wine64", "*/bin/wine",
+                    "*/*/bin/wine64", "*/*/bin/wine"):
+        for path in sorted(runner_dir.glob(pattern)):
+            add(path)
+
+    return found
+
+
+def wine_from_runner_dir(runner_dir: Path):
+    """First working wine binary in a runner directory: (path, version)."""
+    for candidate in candidate_binaries(runner_dir):
+        version = probe_wine(candidate)
+        if version:
+            return candidate, version
+    return None
+
+
+def match_runner_dir(runner: str, roots):
+    """Find a runner's directory by name. Exact match first, then a
+    case-insensitive one. Deliberately NO prefix matching: "soda-9.0-1"
+    must never silently resolve to "soda-9.0-10", which is a different
+    wine build."""
+    for root in roots:
+        if (root / runner).is_dir():
+            return root / runner
+    wanted = runner.lower()
+    for root in roots:
+        for entry in sorted(root.iterdir()):
+            if entry.is_dir() and entry.name.lower() == wanted:
+                return entry
+    return None
+
+
+def wine_for_runner_name(runner: str, roots):
+    # Bottles names the system-wide wine install "sys-wine-<version>".
+    if runner.startswith("sys-"):
+        for name in ("wine64", "wine"):
+            on_path = shutil.which(name)
+            if on_path:
+                version = probe_wine(Path(on_path))
+                if version:
+                    return Path(on_path), version
+        return None
+
+    runner_dir = match_runner_dir(runner, roots)
+    if runner_dir is None:
+        return None
+    return wine_from_runner_dir(runner_dir)
+
+
+def list_working_runners(roots):
+    """Every installed runner that has a working wine binary."""
+    working = []
+    for root in roots:
+        for runner_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            found = wine_from_runner_dir(runner_dir)
+            if found:
+                working.append((runner_dir.name, found[0], found[1]))
+    return working
+
+
+def ask_for_wine_path():
+    raw = input("Path to a wine binary (Enter to abort): ").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    version = probe_wine(path) if path.is_file() else None
+    if not version:
+        print(f"    [warn] {path} is not a working wine binary")
+        return None
+    return path
+
+
+def find_wine_binary(bottle_path: Path):
+    roots = runner_roots(bottle_path)
+    runner = find_runner_name(bottle_path)
+
+    if runner:
+        found = wine_for_runner_name(runner, roots)
+        if found:
+            wine_bin, version = found
+            status(f"Runner '{runner}': {wine_bin} ({version})")
+            return wine_bin
+        searched = ", ".join(str(r) for r in roots) or "(no runners folder found)"
+        print(f"    [warn] Runner '{runner}' from the bottle's config has no "
+              f"working wine binary (searched: {searched})")
+    else:
+        print("    [warn] Could not read the runner name from this bottle's config")
+
+    # The bottle's own runner is unavailable. Falling back to a different
+    # runner is risky if a wineserver for this prefix is already running
+    # (version mismatch), so say so out loud.
+    working = list_working_runners(roots)
+    if len(working) == 1:
+        name, wine_bin, version = working[0]
+        print(f"    [warn] Falling back to the only working runner installed: "
+              f"{name} ({version})")
+        return wine_bin
+    if len(working) > 1:
+        print("\nChoose the runner to use (close the bottle's programs first):")
+        for i, (name, _, version) in enumerate(working, 1):
+            print(f"  {i}. {name} ({version})")
+        while True:
+            choice = input("Number: ").strip()
+            if choice.isdigit() and 1 <= int(choice) <= len(working):
+                return working[int(choice) - 1][1]
+            print("Invalid choice, try again.")
+
+    print("    [warn] No working runner was found automatically.")
+    manual = ask_for_wine_path()
+    if manual:
+        return manual
+    fail("Could not find a working wine binary for this bottle")
 
 
 def run_wine(wine_bin: Path, bottle_path: Path, args):
