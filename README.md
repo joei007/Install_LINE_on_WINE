@@ -21,6 +21,7 @@ Running the script against a chosen bottle:
 2. Installs a custom `dwmapi.dll` proxy into the bottle's `system32` (the real one is renamed to `dwmapi_real.dll` and everything is still forwarded to it — DWM functionality is unaffected). The proxy hooks `CreateWindowExW` and `UpdateLayeredWindow`/`UpdateLayeredWindowIndirect` via [MinHook](https://github.com/TsudaKageyu/minhook) to detect LINE's shadow fragments by class name and force them fully transparent, while still letting them draw (so their window state stays valid and native resize keeps working).
 3. Sets `HKCU\Software\Wine\DllOverrides\dwmapi` to `native,builtin`, which is required for Wine to actually load the file from disk instead of its own built-in `dwmapi.dll`. The `,builtin` fallback matters: the proxy is only ever placed in `system32` (64-bit), never in `syswow64` (32-bit), so any 32-bit process gracefully falls back to Wine's builtin instead of crashing with a missing-DLL error.
 4. Generates a self-signed certificate (`O=Microsoft Corporation`, `CN=Microsoft Windows`) with `openssl`, then signs every `.dll` in both `system32` and `syswow64` with `osslsigncode`.
+5. Writes `9999999999` to `<bottle>/.fonts_stamp`. Before every launch Bottles compares the mtime of the bottle's `Fonts` folder with this file and, if the folder is newer, runs a forced `wineboot -u`. With Proton runners the folder is touched on every launch, so that update ran every time and overwrote the signed DLLs, bringing `NO_SIGNATURE` back. Pinning the stamp stops Bottles from doing that. This is applied to every runner.
 
 The `dwmapi.dll` proxy is embedded in the script as base64, so this is the only file you need.
 
@@ -52,6 +53,7 @@ After it finishes, download and run the LINE installer inside that bottle as usu
 - If you update or recreate the bottle (new runner, fresh bottle), you'll need to run the script again — a new bottle starts with unsigned, unpatched DLLs.
 - **Changing the runner on an existing bottle also requires re-running this script.** A runner switch replaces the bottle's system DLLs with the new runner's (unsigned) copies, so `NO_SIGNATURE` will come back until you patch it again — this isn't limited to creating a brand new bottle.
 - This only fixes running LINE under Wine; it doesn't fix anything on real Windows and has no effect there.
+- The `.fonts_stamp` pin turns off Bottles' automatic handling of manually added fonts for that bottle. Delete `<bottle>/.fonts_stamp` to turn it back on.
 
 ## Credits
 
