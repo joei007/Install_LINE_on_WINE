@@ -21,6 +21,17 @@ runs correctly under Wine:
      it's valid, so this satisfies the check.
      (Source: https://forum.gamer.com.tw/Co.php?bsn=60030&sn=2550747)
 
+  3. Pins the bottle's .fonts_stamp to a far-future value, for every
+     runner. Before each program launch Bottles compares the mtime of
+     the bottle's Fonts folder with that file and, if the folder is
+     newer, runs a forced `wineboot -u`. Proton runners trigger this on
+     EVERY launch (Bottles re-links Proton's fonts into the folder each
+     time), and `wineboot -u` rewrites the system DLLs -- wiping the
+     signatures from step 2. With the stamp pinned, Bottles no longer
+     does that. (Side effect: Bottles' automatic handling of manually
+     added fonts is off for this bottle; delete .fonts_stamp to turn it
+     back on.)
+
 Requirements on the HOST (not inside the bottle):
     - Bottles installed via Flatpak (com.usebottles.bottles)
     - openssl, osslsigncode  (script offers to install via apt if missing)
@@ -414,6 +425,44 @@ def sign_all_dlls(bottle_path: Path):
 
 
 # --------------------------------------------------------------------
+# Step 5: stop Bottles from re-running `wineboot -u` on every launch
+# --------------------------------------------------------------------
+#
+# Before each program launch Bottles compares the mtime of
+# drive_c/windows/Fonts with <bottle>/.fonts_stamp, and if the folder
+# is newer it runs a forced `wineboot -u` (meant for fonts you copied in
+# by hand). For Proton runners Bottles also re-creates the symlinks to
+# Proton's fonts in that folder every time it builds a command, so the
+# folder is ALWAYS newer than the stamp and `wineboot -u` runs on every
+# launch. That recreates Wine's fake DLLs -- including the ones we
+# signed (a signed fake DLL still carries Wine's marker bytes, so Wine
+# treats it as its own) -- and LINE then fails with NO_SIGNATURE.
+# Pinning the stamp far in the future makes the comparison always false.
+#
+# This is done for EVERY runner, not only Proton ones: Proton is the case
+# known to trigger it today, but any runner that adds or touches files in
+# the Fonts folder would cause the same loop. Bottles reads the file as
+# float(text.strip() or 0).
+
+FONTS_STAMP_VALUE = "9999999999"
+
+
+def pin_fonts_stamp(bottle_path: Path):
+    stamp = bottle_path / ".fonts_stamp"
+    try:
+        current = float(stamp.read_text().strip() or 0)
+    except (OSError, ValueError):
+        current = 0.0
+    if current >= float(FONTS_STAMP_VALUE):
+        print("    .fonts_stamp is already pinned -- nothing to do")
+        return
+
+    stamp.write_text(FONTS_STAMP_VALUE)
+    print(f"    Wrote {FONTS_STAMP_VALUE} to {stamp}")
+    print("    (delete that file to restore Bottles' automatic font handling)")
+
+
+# --------------------------------------------------------------------
 
 def main():
     status("Reading list of bottles...")
@@ -432,6 +481,10 @@ def main():
     status("Self-signing all DLLs (fixes NO_SIGNATURE)... this may take a moment")
     count = sign_all_dlls(bottle_path)
     status(f"Done signing {count} file(s)")
+
+    status("Pinning .fonts_stamp so Bottles doesn't re-run 'wineboot -u' on "
+           "every launch...")
+    pin_fonts_stamp(bottle_path)
 
     status("Finished! You can now install LINE via its installer as usual.")
 
